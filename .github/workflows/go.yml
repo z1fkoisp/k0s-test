@@ -1,468 +1,400 @@
 name: Go build
-
-on:
+'on':
   push:
     branches:
-      - main
-      - release-*
+    - main
+    - release-*
     paths-ignore:
-      - "**.md"
-      - .github/ISSUE_TEMPLATE/**
-      - .github/workflows/*.yaml
-      - .github/workflows/*.yml
-        # Re-include all workflow files used by this workflow
-      - "!.github/workflows/go.yml"
-      - "!.github/workflows/build-image-bundle.yml"
-      - "!.github/workflows/build-k0s.yml"
-      - "!.github/workflows/smoketest.yaml"
-      - .github/CODEOWNERS
-      - .github/dependabot.yml
-      - docs/**
-      - hack/ostests/**
-      - LICENSE
-      - mkdocs.yml
-      - renovate.json
-
+    - '**.md'
+    - .github/ISSUE_TEMPLATE/**
+    - .github/workflows/*.yaml
+    - .github/workflows/*.yml
+    - '!.github/workflows/go.yml'
+    - '!.github/workflows/build-image-bundle.yml'
+    - '!.github/workflows/build-k0s.yml'
+    - '!.github/workflows/smoketest.yaml'
+    - .github/CODEOWNERS
+    - .github/dependabot.yml
+    - docs/**
+    - hack/ostests/**
+    - LICENSE
+    - mkdocs.yml
+    - renovate.json
   pull_request:
     branches:
-      - main
-      - release-*
+    - main
+    - release-*
     paths-ignore:
-      - "**.md"
-      - .github/ISSUE_TEMPLATE/**
-      - .github/workflows/*.yaml
-      - .github/workflows/*.yml
-        # Re-include all workflow files used by this workflow
-      - "!.github/workflows/go.yml"
-      - "!.github/workflows/build-image-bundle.yml"
-      - "!.github/workflows/build-k0s.yml"
-      - "!.github/workflows/smoketest.yaml"
-      - .github/CODEOWNERS
-      - .github/dependabot.yml
-      - docs/**
-      - hack/ostests/**
-      - LICENSE
-      - mkdocs.yml
-      - renovate.json
-
+    - '**.md'
+    - .github/ISSUE_TEMPLATE/**
+    - .github/workflows/*.yaml
+    - .github/workflows/*.yml
+    - '!.github/workflows/go.yml'
+    - '!.github/workflows/build-image-bundle.yml'
+    - '!.github/workflows/build-k0s.yml'
+    - '!.github/workflows/smoketest.yaml'
+    - .github/CODEOWNERS
+    - .github/dependabot.yml
+    - docs/**
+    - hack/ostests/**
+    - LICENSE
+    - mkdocs.yml
+    - renovate.json
 env:
   MAKEFLAGS: -j
-  CURL_OPTS: --proto =https --tlsv1.2 --retry 5 --retry-all-errors --silent --show-error --location --fail
-
+  CURL_OPTS: --proto =https --tlsv1.2 --retry 5 --retry-all-errors --silent --show-error
+    --location --fail
 jobs:
   prepare:
     name: Prepare
     runs-on: ubuntu-24.04
-
     outputs:
       smoketest-matrix: ${{ steps.generate-smoketest-matrix.outputs.smoketests }}
       autopilot-matrix: ${{ steps.generate-autopilot-matrix.outputs.matrix }}
-
     steps:
-      - name: "Workflow run :: Checkout"
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: "Generate :: Smoke test matrix"
-        id: generate-smoketest-matrix
-        run: |
-          ./vars.sh FROM=inttest smoketests | jq --raw-input --raw-output \
-              'split(" ") | [ .[] | select(startswith("check-")) | .[6:] ] | "smoketests=" + tojson' >>$GITHUB_OUTPUT
-
-      - name: "Generate :: Autopilot test matrix"
-        id: generate-autopilot-matrix
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          k0sSortVersion=$(./vars.sh FROM=. k0s_sort_version)
-          mkdir -p build/cache/bin
-          curl $CURL_OPTS --output build/cache/bin/k0s_sort "https://github.com/k0sproject/version/releases/download/$k0sSortVersion/k0s_sort-linux-amd64"
-          chmod +x build/cache/bin/k0s_sort
-          export PATH="$(realpath build/cache/bin):$PATH"
-
-          set -x
-          k8sVersion="$(./vars.sh kubernetes_version)"
-          majorVersion="${k8sVersion%%.*}"
-          minorVersion=${k8sVersion#$majorVersion.}
-          minorVersion="${minorVersion%%.*}"
-
-          {
-            printf matrix=
-            hack/tools/gen-matrix.sh "$majorVersion.$(($minorVersion - 1))" "$majorVersion.$minorVersion"
-          } >> "$GITHUB_OUTPUT"
-
+    - name: 'Workflow run :: Checkout'
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: 'Generate :: Smoke test matrix'
+      id: generate-smoketest-matrix
+      run: "./vars.sh FROM=inttest smoketests | jq --raw-input --raw-output \\\n \
+        \   'split(\" \") | [ .[] | select(startswith(\"check-\")) | .[6:] ] | \"\
+        smoketests=\" + tojson' >>$GITHUB_OUTPUT\n"
+    - name: 'Generate :: Autopilot test matrix'
+      id: generate-autopilot-matrix
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "k0sSortVersion=$(./vars.sh FROM=. k0s_sort_version)\nmkdir -p build/cache/bin\n\
+        curl $CURL_OPTS --output build/cache/bin/k0s_sort \"https://github.com/k0sproject/version/releases/download/$k0sSortVersion/k0s_sort-linux-amd64\"\
+        \nchmod +x build/cache/bin/k0s_sort\nexport PATH=\"$(realpath build/cache/bin):$PATH\"\
+        \n\nset -x\nk8sVersion=\"$(./vars.sh kubernetes_version)\"\nmajorVersion=\"\
+        ${k8sVersion%%.*}\"\nminorVersion=${k8sVersion#$majorVersion.}\nminorVersion=\"\
+        ${minorVersion%%.*}\"\n\n{\n  printf matrix=\n  hack/tools/gen-matrix.sh \"\
+        $majorVersion.$(($minorVersion - 1))\" \"$majorVersion.$minorVersion\"\n}\
+        \ >> \"$GITHUB_OUTPUT\"\n"
   build-k0s:
     strategy:
       matrix:
         include:
-          - target-os: linux
-            target-arch: amd64
-          - target-os: linux
-            target-arch: arm64
-          - target-os: windows
-            target-arch: amd64
-
-    name: "Build :: k0s :: ${{ matrix.target-os }}-${{ matrix.target-arch }}"
+        - target-os: linux
+          target-arch: amd64
+        - target-os: linux
+          target-arch: arm64
+        - target-os: windows
+          target-arch: amd64
+    name: 'Build :: k0s :: ${{ matrix.target-os }}-${{ matrix.target-arch }}'
     uses: ./.github/workflows/build-k0s.yml
     with:
       target-os: ${{ matrix.target-os }}
       target-arch: ${{ matrix.target-arch }}
-
   build-airgap-image-bundle:
     strategy:
       fail-fast: false
       matrix:
-        target-arch: [amd64, arm64]
-
-    name: "Build :: Airgap image bundle"
-    needs: [build-k0s]
+        target-arch:
+        - amd64
+        - arm64
+    name: 'Build :: Airgap image bundle'
+    needs:
+    - build-k0s
     uses: ./.github/workflows/build-image-bundle.yml
     with:
       image-bundle-name: airgap
       target-os: linux
       target-arch: ${{ matrix.target-arch }}
-
   build-ipv6-test-image-bundle:
-    name: "Build :: IPv6 test image bundle"
-    needs: [build-k0s]
+    name: 'Build :: IPv6 test image bundle'
+    needs:
+    - build-k0s
     uses: ./.github/workflows/build-image-bundle.yml
     with:
       image-bundle-name: ipv6-test
       target-os: linux
       target-arch: amd64
-
   submit-sbom:
-    name: "Submit :: SBOM"
-
+    name: 'Submit :: SBOM'
     if: github.ref == 'refs/heads/main'
-    needs: [build-k0s]
+    needs:
+    - build-k0s
     runs-on: ubuntu-24.04
-
     permissions:
       id-token: write
       contents: write
-
     steps:
-      - name: Download
-        uses: actions/download-artifact@v6
-        with:
-          name: sbom-linux-amd64
-
-      - name: Submit
-        uses: advanced-security/spdx-dependency-submission-action@v0.2.0
-        with:
-          filePath: spdx.json
-
+    - name: Download
+      uses: actions/download-artifact@v6
+      with:
+        name: sbom-linux-amd64
+    - name: Submit
+      uses: advanced-security/spdx-dependency-submission-action@v0.2.0
+      with:
+        filePath: spdx.json
   unittests-k0s:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-amd64
-            runs-on: ubuntu-24.04
-          - name: windows-amd64
-            runs-on: windows-2022
-            target-os: windows
-          - name: macos-arm64
-            runs-on: macos-15
-            target-os: darwin
-
-    name: "check-unit :: ${{ matrix.name }}"
-    runs-on: "${{ matrix.runs-on }}"
-
+        - name: linux-amd64
+          runs-on: ubuntu-24.04
+        - name: windows-amd64
+          runs-on: windows-2022
+          target-os: windows
+        - name: macos-arm64
+          runs-on: macos-15
+          target-os: darwin
+    name: 'check-unit :: ${{ matrix.name }}'
+    runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
         shell: bash
-
     env:
       EMBEDDED_BINS_BUILDMODE: none
-      # Set SOURCE_DATE_EPOCH to optimize cache usage
       MAKEFLAGS: -j SOURCE_DATE_EPOCH=315532800
-
     steps:
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Prepare unit tests
+      if: matrix.target-os != ''
+      run: 'cat <<EOF >>"$GITHUB_ENV"
 
-      - name: Prepare unit tests
-        if: matrix.target-os != ''
-        run: |
-          cat <<EOF >>"$GITHUB_ENV"
-          TARGET_OS=${{ matrix.target-os }}
-          DOCKER=
-          UNITTEST_EXTRA_ARGS=BUILD_GO_LDFLAGS_EXTRA=
-          EOF
+        TARGET_OS=${{ matrix.target-os }}
 
-          echo ::group::Build Environment
-          cat -- "$GITHUB_ENV"
-          echo ::endgroup::
+        DOCKER=
 
-      - name: Prepare build environment
-        run: .github/workflows/prepare-build-env.sh
+        UNITTEST_EXTRA_ARGS=BUILD_GO_LDFLAGS_EXTRA=
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        if: matrix.target-os != ''
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
+        EOF
 
-      - name: Cache Go cache
-        id: cache-gocache
-        uses: actions/cache@v4
-        with:
-          key: "unittests-k0s-${{ matrix.name }}-gocache-go${{ env.GO_VERSION }}-${{ github.sha }}"
-          restore-keys: "unittests-k0s-${{ matrix.name }}-gocache-go${{ env.GO_VERSION }}-"
-          path: build/cache/go/build
 
-      - name: Run unit tests
-        env:
-          CACHE_HIT_GOCACHE: "${{ steps.cache-gocache.outputs.cache-hit }}"
-        run: |
-          if [ -n "$CACHE_HIT_GOCACHE" ]; then
-            echo Preparing Go cache
-            touch -t "$(TZ=UTC+24 date +%Y%m%d%H%M.%S)" build/cache/_cache_sentinel
-            find build/cache/go/build -type f \( -name '*-a' -o -name '*-d' \) -exec touch -r build/cache/_cache_sentinel {} +
-          fi
+        echo ::group::Build Environment
 
-          make check-unit $UNITTEST_EXTRA_ARGS
+        cat -- "$GITHUB_ENV"
 
-          if [ -n "$CACHE_HIT_GOCACHE" ]; then
-            echo Trimming Go cache
-            find build/cache/go/build -type f \( -name '*-a' -o -name '*-d' \) -not -newer build/cache/_cache_sentinel -delete
-          fi
+        echo ::endgroup::
+
+        '
+    - name: Prepare build environment
+      run: .github/workflows/prepare-build-env.sh
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      if: matrix.target-os != ''
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: false
+    - name: Cache Go cache
+      id: cache-gocache
+      uses: actions/cache@v4
+      with:
+        key: unittests-k0s-${{ matrix.name }}-gocache-go${{ env.GO_VERSION }}-${{
+          github.sha }}
+        restore-keys: unittests-k0s-${{ matrix.name }}-gocache-go${{ env.GO_VERSION
+          }}-
+        path: build/cache/go/build
+    - name: Run unit tests
+      env:
+        CACHE_HIT_GOCACHE: ${{ steps.cache-gocache.outputs.cache-hit }}
+      run: "if [ -n \"$CACHE_HIT_GOCACHE\" ]; then\n  echo Preparing Go cache\n  touch\
+        \ -t \"$(TZ=UTC+24 date +%Y%m%d%H%M.%S)\" build/cache/_cache_sentinel\n  find\
+        \ build/cache/go/build -type f \\( -name '*-a' -o -name '*-d' \\) -exec touch\
+        \ -r build/cache/_cache_sentinel {} +\nfi\n\nmake check-unit $UNITTEST_EXTRA_ARGS\n\
+        \nif [ -n \"$CACHE_HIT_GOCACHE\" ]; then\n  echo Trimming Go cache\n  find\
+        \ build/cache/go/build -type f \\( -name '*-a' -o -name '*-d' \\) -not -newer\
+        \ build/cache/_cache_sentinel -delete\nfi\n"
   smoketests:
     strategy:
       fail-fast: false
       matrix:
         smoke-suite: ${{ fromJson(needs.prepare.outputs.smoketest-matrix) }}
-
-    name: "check-${{ matrix.smoke-suite }} :: amd64"
+    name: 'check-${{ matrix.smoke-suite }} :: amd64'
     needs:
-      - prepare
-      - build-k0s
-      - build-airgap-image-bundle
-      - build-ipv6-test-image-bundle
-
+    - prepare
+    - build-k0s
+    - build-airgap-image-bundle
+    - build-ipv6-test-image-bundle
     uses: ./.github/workflows/smoketest.yaml
     with:
       arch: amd64
       name: ${{ matrix.smoke-suite }}
-
   smoketests-linux-arm64:
     strategy:
       fail-fast: false
       matrix:
         smoke-suite:
-          - airgap
-          - basic
-          - network-conformance-calico
-          - network-conformance-kuberouter
-
-    name: "check-${{ matrix.smoke-suite }} :: arm64"
-    needs: [build-k0s, build-airgap-image-bundle]
-
+        - airgap
+        - basic
+        - network-conformance-calico
+        - network-conformance-kuberouter
+    name: 'check-${{ matrix.smoke-suite }} :: arm64'
+    needs:
+    - build-k0s
+    - build-airgap-image-bundle
     uses: ./.github/workflows/smoketest.yaml
     with:
       arch: arm64
       name: ${{ matrix.smoke-suite }}
-
   autopilot-tests:
     strategy:
       fail-fast: false
       matrix:
         version: ${{fromJson(needs.prepare.outputs.autopilot-matrix)}}
         smoke-suite:
-          - controllerworker
-          - ha3x3
-
-    name: "check-ap-${{ matrix.smoke-suite }} :: ${{ matrix.version }}"
-    needs: [prepare, build-k0s]
-
+        - controllerworker
+        - ha3x3
+    name: 'check-ap-${{ matrix.smoke-suite }} :: ${{ matrix.version }}'
+    needs:
+    - prepare
+    - build-k0s
     uses: ./.github/workflows/smoketest.yaml
     with:
       arch: amd64
       name: ap-${{ matrix.smoke-suite }}
       k0s-reference-version: ${{ matrix.version }}
-
   build-arm:
-    name: "Build :: k0s :: arm"
+    name: 'Build :: k0s :: arm'
     if: github.repository == 'k0sproject/k0s'
-    runs-on:
-      - self-hosted
-      - linux
-      - arm
+    runs-on: ubuntu-latest
     steps:
-      # https://github.com/actions/checkout/issues/273#issuecomment-642908752 (see below)
-      - name: "Pre: Fixup directories"
-        run: find . -type d -not -perm /u+w -exec chmod u+w '{}' \;
+    - name: 'Pre: Fixup directories'
+      run: find . -type d -not -perm /u+w -exec chmod u+w '{}' \;
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Prepare build environment
+      run: .github/workflows/prepare-build-env.sh
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: false
+    - name: Cache embedded binaries
+      id: cache-embedded-bins
+      uses: actions/cache@v4
+      with:
+        key: build-k0s-linux-arm-embedded-bins-${{ hashFiles('embedded-bins/**/*')
+          }}
+        path: embedded-bins/staging/linux/bin/
+    - name: Cache Go cache
+      id: cache-gocache
+      uses: actions/cache@v4
+      with:
+        key: build-k0s-linux-arm-gocache-go${{ env.GO_VERSION }}-${{ github.sha }}
+        restore-keys: build-k0s-linux-arm-gocache-go${{ env.GO_VERSION }}-
+        path: build/cache/go/build
+    - name: Prepare Go cache
+      if: steps.cache-gocache.outputs.cache-hit
+      run: 'touch -t "$(TZ=UTC+24 date +%Y%m%d%H%M.%S)" build/cache/_cache_sentinel
 
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # for `git describe`
-          persist-credentials: false
+        find build/cache/go/build -type f \( -name ''*-a'' -o -name ''*-d'' \) -exec
+        touch -r build/cache/_cache_sentinel {} +
 
-      - name: Prepare build environment
-        run: .github/workflows/prepare-build-env.sh
+        '
+    - name: Build
+      env:
+        EMBEDDED_BINS_CACHED: ${{ steps.cache-embedded-bins.outputs.cache-hit }}
+      run: "gh --version || echo No gh installed\nmake .k0sbuild.docker-image.k0s\n\
+        touch go.sum\nif [ \"$EMBEDDED_BINS_CACHED\" == true ]; then\n  make --touch\
+        \ .bins.linux.stamp\nfi\nmake bindata\nmake --touch codegen\nmake build\n\
+        echo \"k0s binary size: **$(du -sh k0s | cut -f1)**\" >>$GITHUB_STEP_SUMMARY\n"
+    - name: Upload compiled executable
+      uses: actions/upload-artifact@v5
+      with:
+        name: k0s-arm
+        path: k0s
+    - name: Unit tests
+      run: make check-unit
+    - name: Create airgap image list
+      run: make airgap-images.txt
+    - name: Cache airgap image bundle
+      id: cache-airgap-image-bundle
+      uses: actions/cache@v4
+      with:
+        key: airgap-image-bundle-linux-arm-${{ hashFiles('Makefile', 'airgap-images.txt',
+          'cmd/airgap/*', 'pkg/airgap/*') }}
+        path: 'airgap-images.txt
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Cache embedded binaries
-        id: cache-embedded-bins
-        uses: actions/cache@v4
-        with:
-          key: "build-k0s-linux-arm-embedded-bins-${{ hashFiles('embedded-bins/**/*') }}"
-          path: embedded-bins/staging/linux/bin/
+          airgap-image-bundle-linux-arm.tar
 
-      - name: Cache Go cache
-        id: cache-gocache
-        uses: actions/cache@v4
-        with:
-          key: "build-k0s-linux-arm-gocache-go${{ env.GO_VERSION }}-${{ github.sha }}"
-          restore-keys: "build-k0s-linux-arm-gocache-go${{ env.GO_VERSION }}-"
-          path: build/cache/go/build
+          '
+    - name: Create airgap image bundle if not cached
+      if: steps.cache-airgap-image-bundle.outputs.cache-hit != 'true'
+      run: make airgap-image-bundle-linux-arm.tar
+    - name: Upload airgap bundle
+      uses: actions/upload-artifact@v5
+      with:
+        name: airgap-image-bundle-linux-arm.tar
+        path: airgap-image-bundle-linux-arm.tar
+    - name: Trim Go cache
+      if: steps.cache-gocache.outputs.cache-hit
+      run: 'find build/cache/go/build -type f \( -name ''*-a'' -o -name ''*-d'' \)
+        -not -newer build/cache/_cache_sentinel -delete
 
-      - name: Prepare Go cache
-        if: steps.cache-gocache.outputs.cache-hit
-        run: |
-          touch -t "$(TZ=UTC+24 date +%Y%m%d%H%M.%S)" build/cache/_cache_sentinel
-          find build/cache/go/build -type f \( -name '*-a' -o -name '*-d' \) -exec touch -r build/cache/_cache_sentinel {} +
-
-      - name: Build
-        env:
-          EMBEDDED_BINS_CACHED: "${{ steps.cache-embedded-bins.outputs.cache-hit }}"
-        run: |
-          gh --version || echo No gh installed
-          make .k0sbuild.docker-image.k0s
-          touch go.sum
-          if [ "$EMBEDDED_BINS_CACHED" == true ]; then
-            make --touch .bins.linux.stamp
-          fi
-          make bindata
-          make --touch codegen
-          make build
-          echo "k0s binary size: **$(du -sh k0s | cut -f1)**" >>$GITHUB_STEP_SUMMARY
-
-      - name: Upload compiled executable
-        uses: actions/upload-artifact@v5
-        with:
-          name: k0s-arm
-          path: k0s
-
-      - name: Unit tests
-        run: make check-unit
-
-      - name: Create airgap image list
-        run: make airgap-images.txt
-
-      - name: Cache airgap image bundle
-        id: cache-airgap-image-bundle
-        uses: actions/cache@v4
-        with:
-          key: airgap-image-bundle-linux-arm-${{ hashFiles('Makefile', 'airgap-images.txt', 'cmd/airgap/*', 'pkg/airgap/*') }}
-          path: |
-            airgap-images.txt
-            airgap-image-bundle-linux-arm.tar
-
-      - name: Create airgap image bundle if not cached
-        if: steps.cache-airgap-image-bundle.outputs.cache-hit != 'true'
-        run: make airgap-image-bundle-linux-arm.tar
-
-      - name: Upload airgap bundle
-        uses: actions/upload-artifact@v5
-        with:
-          name: airgap-image-bundle-linux-arm.tar
-          path: airgap-image-bundle-linux-arm.tar
-
-      - name: Trim Go cache
-        if: steps.cache-gocache.outputs.cache-hit
-        run: |
-          find build/cache/go/build -type f \( -name '*-a' -o -name '*-d' \) -not -newer build/cache/_cache_sentinel -delete
-
-  # TODO We probably want to separate the smoketest into a separate callable workflow which we can call from the build step
-  # This way we could actually fully parallelize the build and smoketest steps. Currently we are limited by the fact that
-  # smoke-test step only start after both arm and armv7 builds have finished.
+        '
   smoketest-arm:
-    name: "${{ matrix.test }} :: arm"
+    name: '${{ matrix.test }} :: arm'
     if: github.repository == 'k0sproject/k0s'
-    needs: [build-arm]
+    needs:
+    - build-arm
     strategy:
       fail-fast: false
       matrix:
         test:
-          - check-basic
-          - check-calico
-          - check-airgap
-    runs-on:
-      - self-hosted
-      - linux
-      - arm
-
+        - check-basic
+        - check-calico
+        - check-airgap
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # for `git describe`
-          persist-credentials: false
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Prepare build environment
+      run: .github/workflows/prepare-build-env.sh
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: false
+    - name: Download compiled binary
+      uses: actions/download-artifact@v6
+      with:
+        name: k0s-arm
+    - name: k0s sysinfo
+      run: 'chmod +x k0s
 
-      - name: Prepare build environment
-        run: .github/workflows/prepare-build-env.sh
+        ./k0s sysinfo
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Download compiled binary
-        uses: actions/download-artifact@v6
-        with:
-          name: k0s-arm
+        '
+    - name: Download airgap bundle
+      if: contains(matrix.test, 'airgap')
+      uses: actions/download-artifact@v6
+      with:
+        name: airgap-image-bundle-linux-arm.tar
+    - name: Run smoketest
+      run: make -C inttest ${{ matrix.test }}
+    - name: Collect k0s logs and support bundle
+      if: failure()
+      uses: actions/upload-artifact@v5
+      with:
+        name: smoketest-arm-check-basic-files
+        path: '/tmp/*.log
 
-      - name: k0s sysinfo
-        run: |
-          chmod +x k0s
-          ./k0s sysinfo
+          /tmp/support-bundle.tar.gz
 
-      - name: Download airgap bundle
-        if: contains(matrix.test, 'airgap')
-        uses: actions/download-artifact@v6
-        with:
-          name: airgap-image-bundle-linux-arm.tar
-
-      - name: Run smoketest
-        run: make -C inttest ${{ matrix.test }}
-
-      - name: Collect k0s logs and support bundle
-        if: failure()
-        uses: actions/upload-artifact@v5
-        with:
-          name: smoketest-arm-check-basic-files
-          path: |
-            /tmp/*.log
-            /tmp/support-bundle.tar.gz
-
-      # https://github.com/actions/checkout/issues/273#issuecomment-642908752
-      # Golang mod cache tends to set directories to read-only, which breaks any
-      # attempts to simply remove those directories. The `make clean-gocache`
-      # target takes care of this, but the mod cache can't be deleted here,
-      # since it shall be cached across builds, and caching takes place as a
-      # post build action. So, as a workaround, ensure that all subdirectories
-      # are writable.
-      - name: "Post: Fixup directories"
-        if: always()
-        run: find . -type d -not -perm /u+w -exec chmod u+w '{}' \;
-
-      - name: "Docker prune"
-        if: always()
-        run: docker system prune --force --filter "until=$((24*7))h"
-  
+          '
+    - name: 'Post: Fixup directories'
+      if: always()
+      run: find . -type d -not -perm /u+w -exec chmod u+w '{}' \;
+    - name: Docker prune
+      if: always()
+      run: docker system prune --force --filter "until=$((24*7))h"
   win-wsl-smoketest:
-    name: "Windows WSL Smoketest"
-    needs: [build-k0s]
+    name: Windows WSL Smoketest
+    needs:
+    - build-k0s
     uses: ./.github/workflows/win-wsl.yaml
